@@ -14,6 +14,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 #if !defined(_WIN32)
@@ -52,7 +53,7 @@ Options:
   --threads N           Worker threads (0 = automatic)
   --cache PATH          Feedback table cache (default .wordle-cache.bin)
   --no-cache            Build the table in memory without a disk cache
-  --answers FILE        Custom answer list, one five-letter ASCII word per line
+  --answers FILE        Use only this answer list (one five-letter word per line)
   --guesses FILE        Custom allowed guesses (answers are always included)
   --first-guess WORD    Force the next simulated guess for solve/evaluate
   --max-turns N         Turn limit for solve/evaluate (default 6)
@@ -69,7 +70,8 @@ Examples:
 The default historical strategy uses a validated optimal decision book.
 Dynamic ranking is exhaustive over the supplied guesses. Small-state best guesses use
 exact expected-guess search; --exact-threshold 0 selects pure heuristic scoring.
-The bundled corpus is historical, not a live NYT dictionary.
+When no original answer fits, all known words are checked against your clues.
+An explicit --answers list stays strict. The bundled lists aren't live NYT data.
 )";
 
 bool color_enabled() {
@@ -89,7 +91,7 @@ std::string tiles(const std::string& guess, const std::string& pattern) {
         result += static_cast<char>(guess[i] - 'a' + 'A');
         result += " \033[0m ";
     }
-    return result;
+    return result + " " + pattern;
 }
 
 std::size_t number(const std::string& text, const std::string& option) {
@@ -172,15 +174,67 @@ std::pair<std::string, std::uint8_t> observation(const std::string& item) {
     if (item.size() != 11 || item[5] != ':') throw std::invalid_argument("history must be WORD:01220");
     return {word(item.substr(0, 5)), wordle::parse_pattern(item.substr(6))};
 }
-CandidateSet apply_history(const wordle::Solver& solver, const Arguments& a) {
-    auto candidates = solver.initial_candidates();
-    for (const auto& item : a.history) {
-        const auto [guess, pattern] = observation(item);
-        candidates = solver.filter(candidates, guess, pattern);
-        if (candidates.empty()) throw std::invalid_argument("history contradicts the answer list at " + item);
+struct Step { std::string guess, pattern; std::size_t remaining; };
+
+class Puzzle {
+public:
+    Puzzle(const wordle::Solver& original, const Arguments& a)
+        : original_(original), options_{a.threads, a.cache, a.exact, true}, can_expand_(a.answers.empty()) {
+        reset();
+        for (const auto& item : a.history) {
+            const auto [guess, pattern] = observation(item);
+            if (!add(guess, pattern)) throw std::invalid_argument("history does not match the word list at " + item);
+        }
     }
-    return candidates;
-}
+
+    const wordle::Solver& solver() const { return expanded() ? *larger_ : original_; }
+    const CandidateSet& candidates() const { return states_.back().candidates; }
+    const std::vector<Step>& steps() const { return steps_; }
+    bool expanded() const { return states_.back().expanded; }
+    bool solved() const { return !steps_.empty() && steps_.back().pattern == "22222"; }
+
+    bool add(const std::string& guess, std::uint8_t pattern) {
+        if (solved()) return false;
+        auto remaining = solver().filter(candidates(), guess, pattern);
+        bool use_larger = expanded();
+        if (remaining.empty() && can_expand_ && !use_larger) {
+            if (!larger_) larger_ = std::make_unique<wordle::Solver>(original_.guesses(), original_.guesses(), options_);
+            remaining = larger_->initial_candidates();
+            for (const auto& step : steps_) {
+                remaining = larger_->filter(remaining, step.guess, wordle::parse_pattern(step.pattern));
+                if (remaining.empty()) break;
+            }
+            remaining = larger_->filter(remaining, guess, pattern);
+            use_larger = true;
+        }
+        if (remaining.empty()) return false;
+        steps_.push_back({guess, wordle::format_pattern(pattern), remaining.size()});
+        states_.push_back({std::move(remaining), use_larger});
+        return true;
+    }
+
+    void undo() {
+        if (steps_.empty()) return;
+        steps_.pop_back();
+        states_.pop_back();
+    }
+    void reset() {
+        steps_.clear();
+        states_.clear();
+        states_.push_back({original_.initial_candidates(), false});
+    }
+
+private:
+    struct State { CandidateSet candidates; bool expanded; };
+    const wordle::Solver& original_;
+    wordle::Options options_;
+    bool can_expand_;
+    std::unique_ptr<wordle::Solver> larger_;
+    std::vector<State> states_;
+    std::vector<Step> steps_;
+};
+
+const char* expanded_notice = "No matches in the original answer list. Using the larger word list.\n";
 void print_recommendation(const Recommendation& r) {
     std::cout << "{\"word\":\"" << r.word << "\",\"entropy_bits\":" << r.entropy
               << ",\"expected_remaining\":" << r.expected_remaining
@@ -218,7 +272,7 @@ Recommendation describe_move(const wordle::Solver& solver, const CandidateSet& c
     return r;
 }
 void explain(const wordle::Solver& solver, const Arguments& a, const CandidateSet& candidates,
-             const wordle::OptimalBook* book, const std::string& requested = {}) {
+             const wordle::OptimalBook* book, const std::string& requested = {}, bool expanded = false) {
     const auto next = requested.empty() ? choose(solver, a, candidates, book, a.candidate_only) : word(requested);
     if (!std::binary_search(solver.guesses().begin(), solver.guesses().end(), next))
         throw std::invalid_argument("guess is not in the supplied guess list: " + next);
@@ -248,7 +302,7 @@ void explain(const wordle::Solver& solver, const Arguments& a, const CandidateSe
     std::sort(traps.begin(), traps.end(), [](const auto& x, const auto& y) { return x.second.size() != y.second.size() ? x.second.size() > y.second.size() : x.first < y.first; });
     if (traps.size() > 3) traps.resize(3);
     if (a.json) {
-        std::cout << "{\"word\":\"" << next << "\",\"candidate_count\":" << candidates.size()
+        std::cout << "{\"word\":\"" << next << "\",\"expanded_dictionary\":" << (expanded ? "true" : "false") << ",\"candidate_count\":" << candidates.size()
                   << ",\"outcome_count\":" << buckets.size() << ",\"entropy_bits\":" << entropy
                   << ",\"expected_remaining\":" << expected << ",\"worst_case\":" << buckets.front().first << ",\"outcomes\":[";
         for (std::size_t i = 0; i < buckets.size(); ++i) {
@@ -290,7 +344,7 @@ void explain(const wordle::Solver& solver, const Arguments& a, const CandidateSe
     }
 }
 void suggest(const wordle::Solver& solver, const Arguments& a, const CandidateSet& candidates,
-             const wordle::OptimalBook* book) {
+             const wordle::OptimalBook* book, bool expanded = false) {
     const auto start = Clock::now();
     const auto ranking = a.top ? solver.rank(candidates, a.top, a.strategy, a.candidate_only) : std::vector<Recommendation>{};
     const auto move = book ? book->lookup(candidates) : std::nullopt;
@@ -301,7 +355,7 @@ void suggest(const wordle::Solver& solver, const Arguments& a, const CandidateSe
     else recommendation = solver.best(candidates, a.strategy, a.candidate_only);
     const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     if (a.json) {
-        std::cout << "{\"candidate_count\":" << candidates.size() << ",\"policy\":\""
+        std::cout << "{\"candidate_count\":" << candidates.size() << ",\"expanded_dictionary\":" << (expanded ? "true" : "false") << ",\"policy\":\""
                   << (move ? "optimal-book" : recommendation.exact ? "exact-endgame" : "heuristic") << "\",\"recommendation\":";
         print_recommendation(recommendation);
         std::cout << ",\"ranking\":[";
@@ -311,6 +365,7 @@ void suggest(const wordle::Solver& solver, const Arguments& a, const CandidateSe
         std::cout << "],\"ranking_ms\":" << elapsed << ",\"matrix_ms\":" << solver.matrix_seconds() * 1000
                   << ",\"cache_loaded\":" << (solver.cache_loaded() ? "true" : "false") << "}\n";
     } else {
+        if (expanded) std::cout << expanded_notice;
         std::cout << candidates.size() << " possible answers. Play " << recommendation.word;
         if (recommendation.exact) std::cout << " (" << recommendation.expected_guesses << " expected guesses to finish)";
         if (!ranking.empty()) {
@@ -323,45 +378,36 @@ void suggest(const wordle::Solver& solver, const Arguments& a, const CandidateSe
         std::cout << "\n" << (move ? "Book" : "Search") << ": " << elapsed << " ms\n";
     }
 }
-struct Step { std::string guess, pattern; std::size_t remaining; };
 struct Game { std::string answer; bool solved = false; std::vector<Step> steps; };
-using Policy = std::map<std::pair<CandidateSet, bool>, std::string>;
+using Policy = std::map<std::tuple<CandidateSet, bool, bool>, std::string>;
 Game play(const wordle::Solver& solver, const Arguments& a, const std::string& answer, Policy& policy,
           const wordle::OptimalBook* book) {
-    if (!std::binary_search(solver.answers().begin(), solver.answers().end(), answer))
+    if (!std::binary_search(solver.answers().begin(), solver.answers().end(), answer) &&
+        (!a.answers.empty() || !std::binary_search(solver.guesses().begin(), solver.guesses().end(), answer)))
         throw std::invalid_argument("answer is not in the supplied answer list: " + answer);
     if (a.history.size() > a.max_turns) throw std::invalid_argument("history exceeds the simulated turn limit");
-    auto candidates = solver.initial_candidates();
-    Game game{answer, false, {}};
-    for (const auto& item : a.history) {
-        if (game.solved) throw std::invalid_argument("history continues after the puzzle was solved");
-        const auto [guess, pattern] = observation(item);
-        candidates = solver.filter(candidates, guess, pattern);
-        if (candidates.empty()) throw std::invalid_argument("history contradicts the answer list at " + item);
-        game.steps.push_back({guess, wordle::format_pattern(pattern), candidates.size()});
-        game.solved = pattern == 242;
-    }
-    if (std::none_of(candidates.begin(), candidates.end(), [&](auto id) { return solver.answers()[id] == answer; }))
-        throw std::invalid_argument("answer contradicts the supplied history");
-    if (game.solved) return game;
-    for (std::size_t turn = a.history.size(); turn < a.max_turns; ++turn) {
+    Puzzle puzzle(solver, a);
+    for (const auto& step : puzzle.steps())
+        if (wordle::feedback(step.guess, answer) != wordle::parse_pattern(step.pattern))
+            throw std::invalid_argument("answer contradicts the supplied history");
+    for (std::size_t turn = a.history.size(); turn < a.max_turns && !puzzle.solved(); ++turn) {
         const bool candidate_only = a.candidate_only || turn + 1 == a.max_turns;
+        const auto& candidates = puzzle.candidates();
+        const auto& current_solver = puzzle.solver();
         std::string guess;
         if (turn == a.history.size() && !a.first.empty()) {
             guess = a.first;
-            if (candidate_only && std::none_of(candidates.begin(), candidates.end(), [&](auto id) { return solver.answers()[id] == guess; }))
+            if (candidate_only && std::none_of(candidates.begin(), candidates.end(), [&](auto id) { return current_solver.answers()[id] == guess; }))
                 throw std::invalid_argument("forced guess must be a remaining answer in candidate-only mode or on the final turn");
         } else {
-            const auto [it, inserted] = policy.try_emplace({candidates, candidate_only});
-            if (inserted) it->second = choose(solver, a, candidates, book, candidate_only);
+            const auto [it, inserted] = policy.try_emplace({candidates, candidate_only, puzzle.expanded()});
+            if (inserted) it->second = choose(current_solver, a, candidates, puzzle.expanded() ? nullptr : book, candidate_only);
             guess = it->second;
         }
         const auto pattern = wordle::feedback(guess, answer);
-        candidates = solver.filter(candidates, guess, pattern);
-        game.steps.push_back({guess, wordle::format_pattern(pattern), candidates.size()});
-        if (pattern == 242) { game.solved = true; break; }
+        if (!puzzle.add(guess, pattern)) throw std::runtime_error("answer does not match the word list");
     }
-    return game;
+    return {answer, puzzle.solved(), puzzle.steps()};
 }
 void print_game(const Game& game, bool json) {
     if (json) {
@@ -438,41 +484,74 @@ void bench(const wordle::Solver& solver, const Arguments& a) {
     if (a.json) std::cout << "]}\n";
 }
 void interactive(const wordle::Solver& solver, const Arguments& a, const wordle::OptimalBook* book) {
-    std::vector<CandidateSet> states = {apply_history(solver, a)};
+    Puzzle puzzle(solver, a);
     std::cout << "\nwordle solver\n"
-              << "0 gray · 1 yellow · 2 green\n"
-              << "why · list · undo · reset · quit\n";
+              << "Play the suggested word in Wordle, then enter its tile colors here.\n"
+              << "0 gray · 1 yellow · 2 green (B/Y/G works too)\n"
+              << "Played another word? Type it first, or enter word + colors.\n"
+              << "help · why · list · undo · reset · quit\n";
+    if (puzzle.expanded()) std::cout << expanded_notice;
+    std::string next;
     while (true) {
-        const auto next = choose(solver, a, states.back(), book, a.candidate_only);
-        std::cout << "\nPlay " << next << " (" << states.back().size() << " left).\n"
-                  << "Feedback, or 'crane 01220': " << std::flush;
+        if (puzzle.solved()) { std::cout << "Solved: " << puzzle.steps().back().guess << '\n'; break; }
+        const auto& current_solver = puzzle.solver();
+        const auto* current_book = puzzle.expanded() ? nullptr : book;
+        if (next.empty()) next = choose(current_solver, a, puzzle.candidates(), current_book, a.candidate_only);
+        std::cout << "\nPlay " << next << " (" << puzzle.candidates().size() << " left).\n"
+                  << "Colors for " << next << ": " << std::flush;
         std::string line;
         if (!std::getline(std::cin, line)) break;
         const auto first = line.find_first_not_of(" \t\r");
         if (first == std::string::npos) continue;
         line = line.substr(first, line.find_last_not_of(" \t\r") - first + 1);
+        for (auto& c : line) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
         if (line == "quit" || line == "q") break;
-        if (line == "undo") { if (states.size() > 1) states.pop_back(); continue; }
-        if (line == "reset") { states = {solver.initial_candidates()}; continue; }
-        if (line == "why") { explain(solver, a, states.back(), book, next); continue; }
+        if (line == "undo") { puzzle.undo(); next.clear(); continue; }
+        if (line == "reset") { puzzle.reset(); next.clear(); continue; }
+        if (line == "help" || line == "?" || line == "feedback") {
+            std::cout << "Enter five colors for " << next << ": 0 gray, 1 yellow, 2 green.\n"
+                      << "Example: 00101 means gray gray yellow gray yellow.\n"
+                      << "For a different guess, type the word first or enter word + colors.\n";
+            continue;
+        }
+        if (line == "why") {
+            try { explain(current_solver, a, puzzle.candidates(), current_book, next, puzzle.expanded()); }
+            catch (const std::invalid_argument&) {
+                std::cout << "That word isn't in the bundled guess list. You can still enter its colors or choose another word.\n";
+            }
+            continue;
+        }
         if (line == "list") {
-            for (std::size_t i = 0; i < std::min<std::size_t>(40, states.back().size()); ++i)
-                std::cout << solver.answers()[states.back()[i]] << ((i + 1) % 8 == 0 ? '\n' : ' ');
-            std::cout << "\n" << states.back().size() << " possible answers" << (states.back().size() > 40 ? " (first 40 shown)" : "") << '\n';
+            for (std::size_t i = 0; i < std::min<std::size_t>(40, puzzle.candidates().size()); ++i)
+                std::cout << current_solver.answers()[puzzle.candidates()[i]] << ((i + 1) % 8 == 0 ? '\n' : ' ');
+            std::cout << "\n" << puzzle.candidates().size() << " possible answers" << (puzzle.candidates().size() > 40 ? " (first 40 shown)" : "") << '\n';
             continue;
         }
         try {
             std::istringstream input(line);
             std::string guess = next, pattern, extra;
             input >> pattern;
-            if (input >> extra) { guess = word(pattern); pattern = extra; if (input >> extra) throw std::invalid_argument("enter feedback or a guess and feedback"); }
-            const auto code = wordle::parse_pattern(pattern);
-            auto remaining = solver.filter(states.back(), guess, code);
-            if (remaining.empty()) throw std::invalid_argument("no matching answers; check the feedback or use a custom answer list");
+            const bool has_word = static_cast<bool>(input >> extra);
+            if (has_word) { guess = word(pattern); pattern = extra; if (input >> extra) throw std::invalid_argument("extra input"); }
+            std::uint8_t code;
+            try { code = wordle::parse_pattern(pattern); }
+            catch (const std::invalid_argument&) {
+                if (has_word) throw;
+                next = word(pattern);
+                std::cout << "Using " << next << ". Enter its five colors.\n";
+                continue;
+            }
+            const bool was_expanded = puzzle.expanded();
+            if (!puzzle.add(guess, code)) {
+                std::cout << "No word matches all these clues. Check these colors or use 'undo' to fix an earlier guess.\n";
+                continue;
+            }
+            if (!was_expanded && puzzle.expanded()) std::cout << expanded_notice;
             std::cout << tiles(guess, wordle::format_pattern(code)) << '\n';
-            if (code == 242) { std::cout << "Solved: " << guess << '\n'; break; }
-            states.push_back(std::move(remaining));
-        } catch (const std::exception& e) { std::cout << "Invalid feedback: " << e.what() << '\n'; }
+            next.clear();
+        } catch (const std::invalid_argument&) {
+            std::cout << "Enter five colors for " << next << " (0 gray, 1 yellow, 2 green), or type 'help'.\n";
+        }
     }
 }
 } // namespace
@@ -498,8 +577,15 @@ int main(int argc, char** argv) {
         const auto* active_book = !a.dynamic && !a.candidate_only && a.strategy == wordle::Strategy::Expected && book.compatible() ? &book : nullptr;
         if (!a.first.empty() && !std::binary_search(solver.guesses().begin(), solver.guesses().end(), a.first))
             throw std::invalid_argument("opening guess is not in the supplied guess list");
-        if (a.command == "suggest") suggest(solver, a, apply_history(solver, a), active_book);
-        else if (a.command == "why") explain(solver, a, apply_history(solver, a), active_book, a.positional.empty() ? "" : a.positional[0]);
+        if (a.command == "suggest" || a.command == "why") {
+            Puzzle puzzle(solver, a);
+            const auto* current_book = puzzle.expanded() ? nullptr : active_book;
+            if (a.command == "suggest") suggest(puzzle.solver(), a, puzzle.candidates(), current_book, puzzle.expanded());
+            else {
+                if (puzzle.expanded() && !a.json) std::cout << expanded_notice;
+                explain(puzzle.solver(), a, puzzle.candidates(), current_book, a.positional.empty() ? "" : a.positional[0], puzzle.expanded());
+            }
+        }
         else if (a.command == "solve") { Policy policy; const auto game = play(solver, a, word(a.positional[0]), policy, active_book); print_game(game, a.json); return game.solved ? 0 : 2; }
         else if (a.command == "evaluate") return evaluate(solver, a, active_book);
         else if (a.command == "bench") bench(solver, a);

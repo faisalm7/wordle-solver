@@ -147,6 +147,7 @@ class CLIIntegration(unittest.TestCase):
     def test_default_suggestion_and_history(self) -> None:
         initial = self.document("suggest")
         self.assertEqual(initial["candidate_count"], 2315)
+        self.assertFalse(initial["expanded_dictionary"])
         self.assertEqual(set(initial["candidates"]), set(self.answers))
         self.assertEqual(initial["recommendation"]["word"], "salet")
         pattern = feedback("salet", "apple")
@@ -158,6 +159,45 @@ class CLIIntegration(unittest.TestCase):
         singleton = self.document("suggest", "--history", "apple:GGGGG")
         self.assertEqual(singleton["candidates"], ["apple"])
         self.assertEqual(singleton["recommendation"]["word"], "apple")
+
+    def test_answers_outside_the_original_list(self) -> None:
+        history = [("salet", "00101"), ("troll", "22022")]
+        self.assertNotIn("trill", self.answers)
+        self.assertIn("trill", self.guesses)
+        expected = {answer for answer in self.guesses
+                    if all(feedback(guess, answer) == pattern for guess, pattern in history)}
+        self.assertEqual(expected, {"trill", "trull"})
+        arguments = [argument for guess, pattern in history
+                     for argument in ("--history", f"{guess}:{pattern}")]
+        result = self.document("suggest", *arguments)
+        self.assertTrue(result["expanded_dictionary"])
+        self.assertEqual(set(result["candidates"]), expected)
+        self.assertEqual(result["candidate_count"], len(expected))
+        self.assertEqual(result["recommendation"]["word"], "trill")
+        self.assert_explanation(self.document("why", "trill", *arguments), expected, "trill")
+        solved = self.document("suggest", *arguments, "--history", "trill:22222")
+        self.assertEqual(solved["candidates"], ["trill"])
+        self.assertTrue(solved["expanded_dictionary"])
+        self.assert_game(self.document("solve", "trill"), "trill")
+
+    def test_expanded_dictionary_replays_every_clue(self) -> None:
+        history = [("salet", "11001"), ("aback", "22000")]
+        expected = {answer for answer in self.guesses
+                    if all(feedback(guess, answer) == pattern for guess, pattern in history)}
+        last_only = {answer for answer in self.guesses if feedback("aback", answer) == "22000"}
+        self.assertEqual(expected, {"abuts"})
+        self.assertGreater(len(last_only), len(expected))
+        result = self.document("suggest", "--history", "salet:11001", "--history", "aback:22000")
+        self.assertEqual(set(result["candidates"]), expected)
+        self.assertTrue(result["expanded_dictionary"])
+        self.command("suggest", "--history", "salet:00101", "--history", "salet:22222", status=1)
+
+    def test_explicit_answer_lists_stay_closed(self) -> None:
+        arguments = ["--answers", str(ROOT / "data/answers.txt"),
+                     "--guesses", str(ROOT / "data/guesses.txt")]
+        self.command("suggest", *arguments, "--history", "salet:00101",
+                     "--history", "troll:22022", status=1)
+        self.command("solve", "trill", *arguments, status=1)
 
     def test_solve_and_first_guess(self) -> None:
         self.assert_game(self.document("solve", "apple"), "apple")
@@ -298,7 +338,53 @@ class CLIIntegration(unittest.TestCase):
         expected = self.document("suggest", "--answers", str(self.answer_path))["recommendation"]["word"]
         result = self.command("--answers", str(self.answer_path), "--no-cache", stdin="quit\n")
         self.assertIn(f"Play {expected} ({len(self.small_answers)} left).", result.stdout)
+        self.assertIn(f"Colors for {expected}:", result.stdout)
         self.assertNotIn("\x1b", result.stdout + result.stderr)
+
+    def test_interactive_words_and_color_help(self) -> None:
+        result = self.command("--no-cache", stdin="salet\nhelp\n?\nfeedback\nquit\n")
+        self.assertIn("Using salet. Enter its five colors.", result.stdout)
+        self.assertIn("0 gray", result.stdout)
+        self.assertNotIn("Invalid feedback:", result.stdout)
+        self.assertEqual(re.findall(r"Play [a-z]{5} \((\d+) left\)\.", result.stdout), ["2315"] * 5)
+
+        pattern = feedback("crane", "apple")
+        expected = self.document("suggest", "--history", "crane:" + pattern)
+        alternate = self.command("--no-cache", stdin=f"crane\n{pattern}\nquit\n")
+        self.assertIn("Using crane. Enter its five colors.", alternate.stdout)
+        self.assertIn("Colors for crane:", alternate.stdout)
+        self.assertIn(pattern, alternate.stdout)
+        self.assertIn(f"Play {expected['recommendation']['word']} ({expected['candidate_count']} left).",
+                      alternate.stdout)
+
+        unknown = self.command("--no-cache", stdin="zzzzz\nWHY\nFEEDBACK\nquit\n")
+        self.assertIn("Using zzzzz.", unknown.stdout)
+        self.assertIn("You can still enter its colors", unknown.stdout)
+        self.assertIn("Enter five colors for zzzzz", unknown.stdout)
+
+    def test_interactive_trill(self) -> None:
+        result = self.command("--no-cache", stdin="00101\n22022\n22222\n")
+        self.assertEqual(re.findall(r"Play ([a-z]{5}) \((\d+) left\)\.", result.stdout),
+                         [("salet", "2315"), ("troll", "8"), ("trill", "2")])
+        self.assertIn("Solved: trill", result.stdout)
+        for pattern in ("00101", "22022", "22222"):
+            self.assertIn(pattern, result.stdout)
+        self.assertNotIn("Invalid feedback:", result.stdout)
+
+    def test_interactive_expansion_undo_reset_and_contradiction(self) -> None:
+        commands = ["00101", "salet 22222", "list", "22022", "list", "undo", "list",
+                    "22022", "reset", "list", "quit"]
+        result = self.command("--no-cache", stdin="\n".join(commands) + "\n")
+        self.assertNotIn("Solved:", result.stdout)
+        self.assertEqual(re.findall(r"Play ([a-z]{5}) \((\d+) left\)\.", result.stdout),
+                         [("salet", "2315"), ("troll", "8"), ("troll", "8"), ("troll", "8"),
+                          ("trill", "2"), ("trill", "2"), ("troll", "8"), ("troll", "8"),
+                          ("trill", "2"), ("salet", "2315"), ("salet", "2315")])
+        primary = {answer for answer in self.answers if feedback("salet", answer) == "00101"}
+        listed = re.findall(r": ([a-z \n]+)\n(\d+) possible answers", result.stdout)
+        self.assertEqual([(set(words.split()), int(count)) for words, count in listed[:3]],
+                         [(primary, 8), ({"trill", "trull"}, 2), (primary, 8)])
+        self.assertEqual(int(listed[-1][1]), 2315)
 
     def test_interactive_state_and_no_color_redirection(self) -> None:
         pattern = feedback("crane", "apple")
@@ -316,7 +402,7 @@ class CLIIntegration(unittest.TestCase):
         prompts = re.findall(r"Play ([a-z]{5}) \((\d+) left\)\.", result.stdout)
         self.assertEqual(prompts, [(initial_word if count == 5 else next_word, str(count))
                                    for count in expected_sizes])
-        self.assertEqual(result.stdout.count("Invalid feedback:"), 2)
+        self.assertEqual(result.stdout.count("Enter five colors for "), 2)
         self.assertIn(f"{initial_word} splits 5 answers", result.stdout)
         self.assertIn(f"{next_word} splits {len(surviving)} answers", result.stdout)
         listed = re.findall(r": ([a-z \n]+)\n(\d+) possible answers", result.stdout)
