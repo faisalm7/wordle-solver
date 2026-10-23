@@ -1,0 +1,442 @@
+{
+  "build": {
+    "binary": "./build/wordle",
+    "binary_bytes": 690696,
+    "binary_sha256": "d980aa70c3c549eafc0dc1dd7d81d2f28fb543319e020f4f79955d5d60db3525",
+    "build_flags_declared": "-O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic -pthread",
+    "build_flags_note": "Supplied metadata; this driver does not rebuild or infer binary compiler flags.",
+    "compiler_command": "c++",
+    "compiler_version": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin27.0.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+    "source_commit": "126f321bd34e4585118c4f528c45ed3c546acdef",
+    "source_dirty": false,
+    "version": "wordle 1.0.0"
+  },
+  "captured_utc": "2026-10-23T06:57:53.544448+00:00",
+  "dictionary": {
+    "answers": {
+      "sha256": "f40e47975cf360ff9febe7d49c8e285054d8fa3fb9644cea575922060951d6ee",
+      "words": 2315
+    },
+    "corpus": "original historical Wordle",
+    "guesses": {
+      "sha256": "fb66d9b47e0dad70e7c6c886cf76a6f453af3aa75003dcfa129c8326938e7c66",
+      "words": 12972
+    }
+  },
+  "dynamic": {
+    "cold_cache": {
+      "command": [
+        "./build/wordle",
+        "bench",
+        "--cache",
+        "<temporary-cache>/patterns.bin",
+        "--dynamic",
+        "--iterations",
+        "101",
+        "--json"
+      ],
+      "exit_code": 0,
+      "result": {
+        "answers": 2315,
+        "cache_loaded": false,
+        "guesses": 12972,
+        "iterations": 101,
+        "matrix_bytes": 30030180,
+        "matrix_ms": 84.468042,
+        "ranking": [
+          {
+            "best": "roate",
+            "candidates": 2315,
+            "median_ms": 5.814042,
+            "p95_ms": 7.693208
+          },
+          {
+            "best": "liane",
+            "candidates": 100,
+            "median_ms": 0.8335,
+            "p95_ms": 1.024583
+          },
+          {
+            "best": "abers",
+            "candidates": 10,
+            "median_ms": 0.97925,
+            "p95_ms": 1.680041
+          }
+        ]
+      },
+      "wall_ms": 925.416959
+    },
+    "evaluation": {
+      "command": [
+        "./build/wordle",
+        "evaluate",
+        "--dynamic",
+        "--no-cache",
+        "--json"
+      ],
+      "exit_code": 0,
+      "mean_guesses_all_answers": 3.480778,
+      "result": {
+        "answers": 2315,
+        "distribution": {
+          "1": 0,
+          "2": 66,
+          "3": 1186,
+          "4": 950,
+          "5": 110,
+          "6": 3
+        },
+        "failed": 0,
+        "failures": [],
+        "max_guesses_solved": 6,
+        "mean_guesses_solved": 3.480778,
+        "policy_states": 2406,
+        "seconds": 2.408115,
+        "solved": 2315
+      },
+      "wall_ms": 2413.811542
+    },
+    "fresh_process_history": {
+      "command": [
+        "./build/wordle",
+        "suggest",
+        "--history",
+        "crane:01002",
+        "--dynamic",
+        "--no-cache",
+        "--json"
+      ],
+      "first_result": {
+        "cache_loaded": false,
+        "candidate_count": 40,
+        "matrix_ms": 0.0,
+        "policy": "heuristic",
+        "recommendation": {
+          "entropy_bits": 4.265312,
+          "exact": false,
+          "expected_remaining": 2.45,
+          "possible_answer": false,
+          "word": "sough",
+          "worst_case": 4
+        }
+      },
+      "internal_recommendation": {
+        "max_ms": 1.549042,
+        "median_ms": 1.127625,
+        "min_ms": 1.043667,
+        "p95_ms": 1.513791,
+        "samples": 31,
+        "samples_ms": [
+          1.549042,
+          1.228667,
+          1.445542,
+          1.485833,
+          1.069833,
+          1.313958,
+          1.120708,
+          1.066625,
+          1.112417,
+          1.19975,
+          1.110667,
+          1.108208,
+          1.160125,
+          1.08125,
+          1.065416,
+          1.067,
+          1.043667,
+          1.127625,
+          1.1325,
+          1.107833,
+          1.10075,
+          1.490208,
+          1.08775,
+          1.102125,
+          1.130208,
+          1.152291,
+          1.089167,
+          1.173792,
+          1.139584,
+          1.455875,
+          1.513791
+        ]
+      },
+      "process_wall": {
+        "max_ms": 6.470667,
+        "median_ms": 5.524916,
+        "min_ms": 5.211208,
+        "p95_ms": 6.328667,
+        "samples": 31,
+        "samples_ms": [
+          6.328667,
+          5.91025,
+          5.822916,
+          5.779708,
+          5.393458,
+          5.477459,
+          5.804375,
+          5.452792,
+          5.390834,
+          5.876333,
+          5.478833,
+          5.426458,
+          5.760792,
+          5.588917,
+          5.393166,
+          5.282833,
+          5.309666,
+          5.455334,
+          5.977542,
+          5.583667,
+          5.260792,
+          5.723166,
+          5.211208,
+          5.41525,
+          5.803792,
+          5.53375,
+          5.40675,
+          5.524916,
+          5.444125,
+          5.87025,
+          6.470667
+        ]
+      }
+    },
+    "no_cache": {
+      "command": [
+        "./build/wordle",
+        "bench",
+        "--no-cache",
+        "--dynamic",
+        "--iterations",
+        "101",
+        "--json"
+      ],
+      "exit_code": 0,
+      "result": {
+        "answers": 2315,
+        "cache_loaded": false,
+        "guesses": 12972,
+        "iterations": 101,
+        "matrix_bytes": 30030180,
+        "matrix_ms": 47.951208,
+        "ranking": [
+          {
+            "best": "roate",
+            "candidates": 2315,
+            "median_ms": 6.208125,
+            "p95_ms": 8.109542
+          },
+          {
+            "best": "liane",
+            "candidates": 100,
+            "median_ms": 0.738708,
+            "p95_ms": 0.991042
+          },
+          {
+            "best": "abers",
+            "candidates": 10,
+            "median_ms": 1.06,
+            "p95_ms": 1.717083
+          }
+        ]
+      },
+      "wall_ms": 922.541292
+    },
+    "warm_cache": {
+      "command": [
+        "./build/wordle",
+        "bench",
+        "--cache",
+        "<temporary-cache>/patterns.bin",
+        "--dynamic",
+        "--iterations",
+        "101",
+        "--json"
+      ],
+      "exit_code": 0,
+      "result": {
+        "answers": 2315,
+        "cache_loaded": true,
+        "guesses": 12972,
+        "iterations": 101,
+        "matrix_bytes": 30030180,
+        "matrix_ms": 48.007959,
+        "ranking": [
+          {
+            "best": "roate",
+            "candidates": 2315,
+            "median_ms": 5.733208,
+            "p95_ms": 7.554084
+          },
+          {
+            "best": "liane",
+            "candidates": 100,
+            "median_ms": 0.732,
+            "p95_ms": 0.968708
+          },
+          {
+            "best": "abers",
+            "candidates": 10,
+            "median_ms": 1.061833,
+            "p95_ms": 1.830125
+          }
+        ]
+      },
+      "wall_ms": 866.790709
+    }
+  },
+  "environment": {
+    "architecture": "arm64",
+    "cpu": "Apple M3",
+    "logical_cpus": 8,
+    "memory_bytes": 17179869184,
+    "model": "Mac15,3",
+    "os": "macOS-27.0.1-arm64-arm-64bit",
+    "python": "3.9.6"
+  },
+  "methodology": {
+    "cache": "Cold and warm runs share a new temporary matrix cache, deleted after measurement.",
+    "clock": "Python perf_counter_ns for process wall time; native steady_clock for internal times",
+    "comparison_limit": "These measurements do not establish a world speed record or compare other solvers.",
+    "internal_book_timing": "ranking_ms includes recommendation lookup and feedback statistics, and excludes JSON output and process startup.",
+    "percentile": "nearest rank: sorted_samples[ceil(0.95 * N) - 1]",
+    "quality": "Uniform distribution over all 2,315 historical answers, six-turn limit. Solved-only means must be read with the failure count.",
+    "ranking": "Native rank scans all allowed guesses; not a memoized book lookup. Each state size has an untimed warmup.",
+    "startup": "Each sample starts a fresh process with --no-cache; operating-system file caches are uncontrolled."
+  },
+  "optimal_book": {
+    "evaluation": {
+      "command": [
+        "./build/wordle",
+        "evaluate",
+        "--no-cache",
+        "--json"
+      ],
+      "exit_code": 0,
+      "mean_guesses_all_answers": 3.421166,
+      "result": {
+        "answers": 2315,
+        "distribution": {
+          "1": 0,
+          "2": 78,
+          "3": 1225,
+          "4": 971,
+          "5": 41,
+          "6": 0
+        },
+        "failed": 0,
+        "failures": [],
+        "max_guesses_solved": 5,
+        "mean_guesses_solved": 3.421166,
+        "policy_states": 2448,
+        "seconds": 0.0609,
+        "solved": 2315
+      },
+      "wall_ms": 65.782292
+    },
+    "fresh_process_suggest": {
+      "command": [
+        "./build/wordle",
+        "suggest",
+        "--no-cache",
+        "--json"
+      ],
+      "first_result": {
+        "cache_loaded": false,
+        "candidate_count": 2315,
+        "matrix_ms": 0.0,
+        "policy": "optimal-book",
+        "recommendation": {
+          "entropy_bits": 5.834582,
+          "exact": true,
+          "expected_guesses": 3.421166,
+          "expected_remaining": 71.272138,
+          "possible_answer": false,
+          "word": "salet",
+          "worst_case": 221
+        }
+      },
+      "internal_recommendation": {
+        "max_ms": 0.085583,
+        "median_ms": 0.068917,
+        "min_ms": 0.065167,
+        "p95_ms": 0.075333,
+        "samples": 31,
+        "samples_ms": [
+          0.068917,
+          0.0655,
+          0.067,
+          0.07375,
+          0.073209,
+          0.065208,
+          0.065709,
+          0.085583,
+          0.067875,
+          0.072583,
+          0.067167,
+          0.073125,
+          0.067417,
+          0.06625,
+          0.075333,
+          0.068958,
+          0.067208,
+          0.065375,
+          0.070459,
+          0.065416,
+          0.070292,
+          0.065666,
+          0.070041,
+          0.072625,
+          0.070041,
+          0.065833,
+          0.071041,
+          0.070083,
+          0.065541,
+          0.070375,
+          0.065167
+        ]
+      },
+      "process_wall": {
+        "max_ms": 6.659583,
+        "median_ms": 4.958541,
+        "min_ms": 4.296917,
+        "p95_ms": 6.532375,
+        "samples": 31,
+        "samples_ms": [
+          5.612959,
+          4.958541,
+          5.547792,
+          5.8215,
+          6.659583,
+          6.017875,
+          6.367958,
+          6.460667,
+          6.532375,
+          5.97975,
+          5.838958,
+          5.733209,
+          4.681834,
+          4.743666,
+          4.639708,
+          4.867333,
+          5.183083,
+          5.31775,
+          5.334792,
+          4.549292,
+          4.507625,
+          4.5785,
+          4.444083,
+          4.642625,
+          5.016417,
+          4.793792,
+          4.429459,
+          4.443584,
+          4.296917,
+          4.376417,
+          4.297833
+        ]
+      }
+    }
+  },
+  "schema_version": 1
+}
