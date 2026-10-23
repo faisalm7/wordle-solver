@@ -1,0 +1,5 @@
+/build/
+/.wordle-cache.bin*
+*.tmp
+__pycache__/
+.DS_Store
