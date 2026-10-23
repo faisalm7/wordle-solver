@@ -11,7 +11,6 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
-#include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -96,9 +95,8 @@ std::string tiles(const std::string& guess, const std::string& pattern) {
 std::size_t number(const std::string& text, const std::string& option) {
     if (text.empty() || text.find_first_not_of("0123456789") != std::string::npos)
         throw std::invalid_argument(option + " requires a nonnegative integer");
-    std::size_t used = 0;
-    const auto n = std::stoull(text, &used);
-    if (used != text.size() || n > 1000000) throw std::invalid_argument(option + " is out of range");
+    const auto n = std::stoull(text);
+    if (n > 1000000) throw std::invalid_argument(option + " is out of range");
     return static_cast<std::size_t>(n);
 }
 std::string word(std::string s) {
@@ -192,42 +190,48 @@ void print_recommendation(const Recommendation& r) {
     if (r.exact) std::cout << ",\"expected_guesses\":" << r.expected_guesses;
     std::cout << '}';
 }
-Recommendation choose(const wordle::Solver& solver, const Arguments& a, const CandidateSet& candidates,
-                      const wordle::OptimalBook* book, bool candidate_only) {
+std::string choose(const wordle::Solver& solver, const Arguments& a, const CandidateSet& candidates,
+                   const wordle::OptimalBook* book, bool candidate_only) {
     if (book && !candidate_only) {
-        if (const auto move = book->lookup(candidates)) {
-            Recommendation r;
-            r.word = move->word;
-            r.exact = true;
-            r.expected_guesses = move->expected_guesses;
-            std::array<std::size_t, 243> counts{};
-            for (const auto id : candidates) {
-                ++counts[wordle::feedback(r.word, solver.answers()[id])];
-                r.possible_answer = r.possible_answer || r.word == solver.answers()[id];
-            }
-            const double n = static_cast<double>(candidates.size());
-            for (const auto count : counts) if (count) {
-                const double p = static_cast<double>(count) / n;
-                r.entropy -= p * std::log2(p);
-                r.expected_remaining += static_cast<double>(count * count) / n;
-                r.worst_case = std::max(r.worst_case, static_cast<std::uint32_t>(count));
-            }
-            return r;
-        }
+        if (const auto move = book->lookup(candidates)) return move->word;
     }
-    return solver.best(candidates, a.strategy, candidate_only);
+    return solver.best(candidates, a.strategy, candidate_only).word;
+}
+Recommendation describe_move(const wordle::Solver& solver, const CandidateSet& candidates,
+                             const wordle::BookMove& move) {
+    Recommendation r;
+    r.word = move.word;
+    r.exact = true;
+    r.expected_guesses = move.expected_guesses;
+    std::array<std::size_t, 243> counts{};
+    for (const auto id : candidates) {
+        ++counts[wordle::feedback(r.word, solver.answers()[id])];
+        r.possible_answer = r.possible_answer || r.word == solver.answers()[id];
+    }
+    const double n = static_cast<double>(candidates.size());
+    for (const auto count : counts) if (count) {
+        const double p = static_cast<double>(count) / n;
+        r.entropy -= p * std::log2(p);
+        r.expected_remaining += static_cast<double>(count * count) / n;
+        r.worst_case = std::max(r.worst_case, static_cast<std::uint32_t>(count));
+    }
+    return r;
 }
 void explain(const wordle::Solver& solver, const Arguments& a, const CandidateSet& candidates,
              const wordle::OptimalBook* book, const std::string& requested = {}) {
-    const auto next = requested.empty() ? choose(solver, a, candidates, book, a.candidate_only).word : word(requested);
+    const auto next = requested.empty() ? choose(solver, a, candidates, book, a.candidate_only) : word(requested);
     if (!std::binary_search(solver.guesses().begin(), solver.guesses().end(), next))
         throw std::invalid_argument("guess is not in the supplied guess list: " + next);
-    std::array<std::vector<std::string>, 243> outcomes;
+    std::array<CandidateSet, 243> outcomes;
     std::map<std::string, std::vector<std::string>> families;
     for (const auto id : candidates) {
         const auto& answer = solver.answers()[id];
-        outcomes[wordle::feedback(next, answer)].push_back(answer);
-        for (std::size_t i = 0; i < 5; ++i) { auto mask = answer; mask[i] = '?'; families[mask].push_back(answer); }
+        outcomes[wordle::feedback(next, answer)].push_back(id);
+        for (std::size_t i = 0; i < 5; ++i) {
+            auto mask = answer;
+            mask[i] = '?';
+            families[mask].push_back(answer);
+        }
     }
     std::vector<std::pair<std::size_t, std::uint8_t>> buckets;
     double expected = 0, entropy = 0;
@@ -268,7 +272,10 @@ void explain(const wordle::Solver& solver, const Arguments& a, const CandidateSe
             std::cout << "  " << tiles(next, wordle::format_pattern(pattern)) << "  " << std::setw(4) << count << " left";
             const auto& examples = outcomes[pattern];
             std::cout << "  (";
-            for (std::size_t j = 0; j < std::min<std::size_t>(3, examples.size()); ++j) { if (j) std::cout << ", "; std::cout << examples[j]; }
+            for (std::size_t j = 0; j < std::min<std::size_t>(3, examples.size()); ++j) {
+                if (j) std::cout << ", ";
+                std::cout << solver.answers()[examples[j]];
+            }
             if (examples.size() > 3) std::cout << ", ...";
             std::cout << ")\n";
         }
@@ -286,14 +293,16 @@ void suggest(const wordle::Solver& solver, const Arguments& a, const CandidateSe
              const wordle::OptimalBook* book) {
     const auto start = Clock::now();
     const auto ranking = a.top ? solver.rank(candidates, a.top, a.strategy, a.candidate_only) : std::vector<Recommendation>{};
-    const bool from_book = book && book->lookup(candidates).has_value();
-    // Reuse an explicitly requested ranking when it already determines the move.
-    const auto recommendation = !from_book && !ranking.empty() && candidates.size() > std::max<std::size_t>(2, a.exact)
-        ? ranking.front() : choose(solver, a, candidates, book, a.candidate_only);
+    const auto move = book ? book->lookup(candidates) : std::nullopt;
+    Recommendation recommendation;
+    if (move) recommendation = describe_move(solver, candidates, *move);
+    else if (!ranking.empty() && candidates.size() > std::max<std::size_t>(2, a.exact))
+        recommendation = ranking.front();
+    else recommendation = solver.best(candidates, a.strategy, a.candidate_only);
     const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     if (a.json) {
         std::cout << "{\"candidate_count\":" << candidates.size() << ",\"policy\":\""
-                  << (from_book ? "optimal-book" : recommendation.exact ? "exact-endgame" : "heuristic") << "\",\"recommendation\":";
+                  << (move ? "optimal-book" : recommendation.exact ? "exact-endgame" : "heuristic") << "\",\"recommendation\":";
         print_recommendation(recommendation);
         std::cout << ",\"ranking\":[";
         for (std::size_t i = 0; i < ranking.size(); ++i) { if (i) std::cout << ','; print_recommendation(ranking[i]); }
@@ -311,12 +320,12 @@ void suggest(const wordle::Solver& solver, const Arguments& a, const CandidateSe
                           << std::setw(8) << r.worst_case << std::setw(10) << r.entropy << '\n';
             std::cout << "\n* possible answer\n";
         }
-        std::cout << "\n" << (from_book ? "Book" : "Search") << ": " << elapsed << " ms\n";
+        std::cout << "\n" << (move ? "Book" : "Search") << ": " << elapsed << " ms\n";
     }
 }
 struct Step { std::string guess, pattern; std::size_t remaining; };
 struct Game { std::string answer; bool solved = false; std::vector<Step> steps; };
-using Policy = std::map<std::pair<CandidateSet, bool>, Recommendation>;
+using Policy = std::map<std::pair<CandidateSet, bool>, std::string>;
 Game play(const wordle::Solver& solver, const Arguments& a, const std::string& answer, Policy& policy,
           const wordle::OptimalBook* book) {
     if (!std::binary_search(solver.answers().begin(), solver.answers().end(), answer))
@@ -342,12 +351,10 @@ Game play(const wordle::Solver& solver, const Arguments& a, const std::string& a
             guess = a.first;
             if (candidate_only && std::none_of(candidates.begin(), candidates.end(), [&](auto id) { return solver.answers()[id] == guess; }))
                 throw std::invalid_argument("forced guess must be a remaining answer in candidate-only mode or on the final turn");
-        }
-        else {
-            const auto key = std::make_pair(candidates, candidate_only);
-            auto it = policy.find(key);
-            if (it == policy.end()) it = policy.emplace(key, choose(solver, a, candidates, book, candidate_only)).first;
-            guess = it->second.word;
+        } else {
+            const auto [it, inserted] = policy.try_emplace({candidates, candidate_only});
+            if (inserted) it->second = choose(solver, a, candidates, book, candidate_only);
+            guess = it->second;
         }
         const auto pattern = wordle::feedback(guess, answer);
         candidates = solver.filter(candidates, guess, pattern);
@@ -437,7 +444,7 @@ void interactive(const wordle::Solver& solver, const Arguments& a, const wordle:
               << "why · list · undo · reset · quit\n";
     while (true) {
         const auto next = choose(solver, a, states.back(), book, a.candidate_only);
-        std::cout << "\nPlay " << next.word << " (" << states.back().size() << " left).\n"
+        std::cout << "\nPlay " << next << " (" << states.back().size() << " left).\n"
                   << "Feedback, or 'crane 01220': " << std::flush;
         std::string line;
         if (!std::getline(std::cin, line)) break;
@@ -447,7 +454,7 @@ void interactive(const wordle::Solver& solver, const Arguments& a, const wordle:
         if (line == "quit" || line == "q") break;
         if (line == "undo") { if (states.size() > 1) states.pop_back(); continue; }
         if (line == "reset") { states = {solver.initial_candidates()}; continue; }
-        if (line == "why") { explain(solver, a, states.back(), book); continue; }
+        if (line == "why") { explain(solver, a, states.back(), book, next); continue; }
         if (line == "list") {
             for (std::size_t i = 0; i < std::min<std::size_t>(40, states.back().size()); ++i)
                 std::cout << solver.answers()[states.back()[i]] << ((i + 1) % 8 == 0 ? '\n' : ' ');
@@ -456,7 +463,7 @@ void interactive(const wordle::Solver& solver, const Arguments& a, const wordle:
         }
         try {
             std::istringstream input(line);
-            std::string guess = next.word, pattern, extra;
+            std::string guess = next, pattern, extra;
             input >> pattern;
             if (input >> extra) { guess = word(pattern); pattern = extra; if (input >> extra) throw std::invalid_argument("enter feedback or a guess and feedback"); }
             const auto code = wordle::parse_pattern(pattern);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the shipped CLI using an independent Python Wordle reference."""
+"""Checks for the command line interface."""
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ class CLIIntegration(unittest.TestCase):
         expected = sum(count * count for count in counts.values()) / len(candidates)
         entropy = -sum((count / len(candidates)) * math.log2(count / len(candidates))
                        for count in counts.values())
-        # JSON retains six decimal places even when the terminal uses two.
+        # JSON keeps six decimal places; the terminal uses two.
         self.assertAlmostEqual(explanation["expected_remaining"], expected, delta=0.00000051)
         self.assertAlmostEqual(explanation["entropy_bits"], entropy, delta=0.00000051)
         self.assertEqual(explanation["worst_case"], max(counts.values()))
@@ -253,8 +253,7 @@ class CLIIntegration(unittest.TestCase):
 
     def test_cache_load_and_corruption_recovery(self) -> None:
         self.cache.unlink(missing_ok=True)
-        # An explicit ranking over the full corpus requires the matrix. Tiny
-        # custom states intentionally use direct feedback without a disk cache.
+        # Small lists skip the cache, so test it with the full word list.
         cold = self.document("suggest", "--top", "1")
         self.assertFalse(cold["cache_loaded"])
         self.assertTrue(self.cache.exists())

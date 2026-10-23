@@ -10,13 +10,12 @@ namespace wordle {
 
 struct BookMove {
     std::string word;
-    // Mean additional guesses, including this move, under uniform answers.
+    // Average guesses left, including this one. Each answer is equally likely.
     double expected_guesses = 0;
 };
 
-// Alex Selby's optimal unrestricted policy for the original Wordle word lists.
-// Candidate IDs use the sorted, normalized answer dictionary, as in Solver.
-// Other dictionaries and states outside the policy safely miss the book.
+// Alex Selby's strategy for the original word lists. IDs match Solver's sorted
+// answers. A different dictionary or an off-book state returns no move.
 class OptimalBook {
 public:
     OptimalBook(std::vector<std::string> answers, std::vector<std::string> guesses);

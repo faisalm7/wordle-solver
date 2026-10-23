@@ -7,7 +7,6 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
-#include <limits>
 #include <mutex>
 #include <numeric>
 #include <stdexcept>
@@ -38,7 +37,7 @@ std::string normalize(std::string_view value) {
 
 void normalize_words(std::vector<std::string>& words) {
     for (auto& word : words) word = normalize(word);
-    std::sort(words.begin(), words.end());
+    if (!std::is_sorted(words.begin(), words.end())) std::sort(words.begin(), words.end());
     words.erase(std::unique(words.begin(), words.end()), words.end());
 }
 
@@ -109,7 +108,7 @@ CandidateSet canonical_candidates(const CandidateSet& input, std::size_t answer_
     for (const auto id : result) {
         if (id >= answer_count) throw std::invalid_argument("Candidate ID is outside the answer dictionary");
     }
-    std::sort(result.begin(), result.end());
+    if (!std::is_sorted(result.begin(), result.end())) std::sort(result.begin(), result.end());
     result.erase(std::unique(result.begin(), result.end()), result.end());
     return result;
 }
@@ -120,8 +119,7 @@ bool better(const Recommendation& lhs, const Recommendation& rhs, Strategy strat
         if (lhs.expected_remaining != rhs.expected_remaining) return lhs.expected_remaining < rhs.expected_remaining;
         break;
     case Strategy::Entropy:
-        // Quantization keeps mathematically identical histograms tied while
-        // preserving the strict weak ordering required by partial_sort.
+        // Ignore rounding noise when two guesses split the words the same way.
         if (const auto left = std::llround(lhs.entropy * 1e12), right = std::llround(rhs.entropy * 1e12);
             left != right) return left > right;
         break;
@@ -260,8 +258,7 @@ struct Solver::Impl {
         double sum_logs = 0;
         std::uint32_t largest = 0;
         if (candidates.size() <= 128) {
-            // A small state can touch only a handful of the 243 patterns.
-            // Visiting those bins avoids the fixed full-histogram reduction.
+            // Small positions need only the nonempty buckets.
             std::uint8_t touched[128];
             std::size_t touched_count = 0;
             for (const auto answer : candidates) {
@@ -303,11 +300,9 @@ struct Solver::Impl {
         if (candidates.size() == 2) return {3, answer_to_guess[candidates.front()]};
         if (const auto found = memo.find(candidates); found != memo.end()) return found->second;
         const auto n = static_cast<std::uint32_t>(candidates.size());
-        // Sequentially guessing candidates is a valid finite upper bound.
+        // Start with the cost of trying each answer in order.
         ExactResult result{n * (n + 1) / 2, answer_to_guess[candidates.front()]};
-        // Answer guesses win otherwise equal policies; order enables early bound exits.
-        // Both dictionaries are sorted, so assembling these two sorted groups
-        // directly avoids sorting the full guess dictionary at every recursion.
+        // Try answers first, then other guesses. This also settles ties.
         std::vector<std::uint32_t> possible;
         for (const auto id : candidates) possible.push_back(answer_to_guess[id]);
         auto is_possible = [&](auto guess) { return std::binary_search(possible.begin(), possible.end(), guess); };
@@ -318,8 +313,7 @@ struct Solver::Impl {
                 : static_cast<std::uint32_t>(choice - possible.size());
             if (choice >= possible.size() && is_possible(guess)) continue;
             const auto* values = matrix_available ? row(guess) : nullptr;
-            // Exact search is capped at twelve candidates; there can never be
-            // more than twelve nonempty buckets, regardless of pattern codes.
+            // Exact search handles at most 12 answers.
             std::array<CandidateSet, 12> buckets;
             std::string partition_key;
             partition_key.reserve(candidates.size() + 1);
@@ -348,7 +342,7 @@ struct Solver::Impl {
             const bool prefer = is_possible(guess) != is_possible(result.guess)
                 ? is_possible(guess) : guess < result.guess;
             if (cost < result.cost || (cost == result.cost && prefer)) result = {cost, guess};
-            // Every answer except a correct first guess needs at least two guesses.
+            // Can't do better than solving one now and the rest next turn.
             if (result.cost == 2 * n - 1) break;
         }
         memo.emplace(candidates, result);
@@ -357,14 +351,12 @@ struct Solver::Impl {
 };
 
 Solver::Solver(std::vector<std::string> answers, std::vector<std::string> guesses, Options options)
-    : impl_(std::make_shared<Impl>()) {
+    : impl_(std::make_unique<Impl>()) {
     normalize_words(answers);
     if (answers.empty()) throw std::invalid_argument("Answer dictionary cannot be empty");
     guesses.insert(guesses.end(), answers.begin(), answers.end());
     normalize_words(guesses);
-    if (answers.size() > std::numeric_limits<std::uint32_t>::max() ||
-        guesses.size() > std::numeric_limits<std::uint32_t>::max() ||
-        guesses.size() > matrix_limit / answers.size()) {
+    if (guesses.size() > matrix_limit / answers.size()) {
         throw std::length_error("Feedback matrix exceeds the 512 MiB memory limit");
     }
     if (options.exact_threshold > 12) throw std::invalid_argument("Exact search threshold must not exceed 12 candidates");
@@ -382,6 +374,8 @@ Solver::Solver(std::vector<std::string> answers, std::vector<std::string> guesse
     for (std::size_t i = 1; i < data.count_log_count.size(); ++i) data.count_log_count[i] = static_cast<double>(i) * std::log2(static_cast<double>(i));
     if (!data.options.defer_matrix) data.ensure_matrix();
 }
+
+Solver::~Solver() = default;
 
 const std::vector<std::string>& Solver::answers() const { return impl_->answer_words; }
 const std::vector<std::string>& Solver::guesses() const { return impl_->guess_words; }
@@ -413,8 +407,7 @@ std::vector<Recommendation> Solver::rank(const CandidateSet& input, std::size_t 
     const auto candidates = canonical_candidates(input, answers().size());
     if (candidates.empty()) throw std::invalid_argument("Cannot rank an empty candidate set");
     if (limit == 0) return {};
-    // A fresh process with a small observed state needs only G*N feedbacks,
-    // rather than the G*A full dictionary table. Once a table exists, use it.
+    // Small positions don't need the full table.
     if (candidates.size() > 128) impl_->ensure_matrix();
     const bool matrix_available = impl_->matrix_ready.load(std::memory_order_acquire);
     std::vector<bool> possible(guesses().size(), false);
@@ -424,8 +417,7 @@ std::vector<Recommendation> Solver::rank(const CandidateSet& input, std::size_t 
     else { choices.resize(guesses().size()); std::iota(choices.begin(), choices.end(), 0U); }
     std::vector<Recommendation> results(choices.size());
     const auto work = choices.size() * candidates.size();
-    // Direct feedback costs appreciably more than a byte lookup, so use a
-    // lower work threshold before sharing a deferred state's computation.
+    // Scoring without the table is more work, so start workers sooner.
     const std::size_t parallel_threshold = matrix_available ? 1000000 : 100000;
     const auto threads = work >= parallel_threshold ? thread_count(impl_->options.threads, choices.size()) : 1;
     const double log_n = std::log2(static_cast<double>(candidates.size()));
@@ -443,8 +435,7 @@ Recommendation Solver::best(const CandidateSet& input, Strategy strategy, bool c
     const auto candidates = canonical_candidates(input, answers().size());
     if (candidates.empty()) throw std::invalid_argument("Cannot choose from an empty candidate set");
     if (candidates.size() <= 2) {
-        // Guessing a candidate is optimal for every ranking objective here.
-        // Keep these trivial endgames allocation-free even with exact search disabled.
+        // With one or two answers left, just guess one.
         return {answers()[candidates.front()], candidates.size() == 1 ? 0.0 : 1.0,
                 1, 1, true, candidates.size() == 1 ? 1.0 : 1.5, true};
     }

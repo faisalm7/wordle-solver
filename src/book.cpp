@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <string_view>
 
 namespace wordle {
 namespace {
@@ -24,12 +23,6 @@ bool normalize_words(std::vector<std::string>& words) {
     return true;
 }
 
-template <class Dictionary>
-bool same_dictionary(const std::vector<std::string>& words, const Dictionary& reference) {
-    return words.size() == reference.size() &&
-           std::equal(words.begin(), words.end(), reference.begin());
-}
-
 std::uint64_t state_hash(const CandidateSet& candidates) {
     std::uint64_t hash = fnv_offset;
     for (const auto id : candidates) {
@@ -47,7 +40,7 @@ constexpr std::size_t root_index() {
 }
 
 constexpr auto initial_node = root_index();
-static_assert(initial_node < generated_book::kNodes.size(), "Optimal book must contain the initial state");
+static_assert(initial_node < generated_book::kNodes.size(), "Book is missing the opening move");
 
 BookMove move_for(const generated_book::Node& node) {
     return {std::string(generated_book::kGuesses[node.guess]),
@@ -56,12 +49,11 @@ BookMove move_for(const generated_book::Node& node) {
 
 std::optional<BookMove> find_state(const CandidateSet& candidates) {
     if (candidates.empty()) return std::nullopt;
-    // Every singleton has the same optimal action, even after an off-book move.
+    // One answer left: play it, even if we went off book.
     if (candidates.size() == 1) {
         return BookMove{std::string(generated_book::kAnswers[candidates.front()]), 1.0};
     }
-    // A canonical, valid state with all IDs is necessarily the initial state.
-    // Skip serial hashing of 2,315 IDs for this common opening lookup.
+    // All answers means the opening. No need to hash 2,315 IDs.
     if (candidates.size() == generated_book::kAnswers.size()) {
         return move_for(generated_book::kNodes[initial_node]);
     }
@@ -70,7 +62,7 @@ std::optional<BookMove> find_state(const CandidateSet& candidates) {
     auto node = std::lower_bound(nodes.begin(), nodes.end(), hash,
                                  [](const auto& entry, std::uint64_t key) { return entry.hash < key; });
     for (; node != nodes.end() && node->hash == hash; ++node) {
-        // The complete key comparison makes hash collisions harmless.
+        // Check the IDs too, in case two states hash alike.
         if (node->size != candidates.size()) continue;
         const auto ids = generated_book::kCandidateIds.begin() + node->ids_offset;
         if (!std::equal(candidates.begin(), candidates.end(), ids)) continue;
@@ -82,13 +74,14 @@ std::optional<BookMove> find_state(const CandidateSet& candidates) {
 } // namespace
 
 OptimalBook::OptimalBook(std::vector<std::string> answers, std::vector<std::string> guesses) {
-    if (!normalize_words(answers) || !same_dictionary(answers, generated_book::kAnswers)) return;
+    if (!normalize_words(answers) || !std::ranges::equal(answers, generated_book::kAnswers)) return;
     if (!normalize_words(guesses)) return;
-    if (same_dictionary(guesses, generated_book::kGuesses)) { compatible_ = true; return; }
-    // Solver always makes all answers legal guesses, including custom input.
+    if (std::ranges::equal(guesses, generated_book::kGuesses)) { compatible_ = true; return; }
+    // Solver adds answers to the guess list, so do the same here.
     guesses.insert(guesses.end(), answers.begin(), answers.end());
-    if (!normalize_words(guesses)) return;
-    compatible_ = same_dictionary(guesses, generated_book::kGuesses);
+    std::sort(guesses.begin(), guesses.end());
+    guesses.erase(std::unique(guesses.begin(), guesses.end()), guesses.end());
+    compatible_ = std::ranges::equal(guesses, generated_book::kGuesses);
 }
 
 bool OptimalBook::compatible() const noexcept { return compatible_; }
@@ -100,7 +93,7 @@ std::optional<BookMove> OptimalBook::lookup(const CandidateSet& candidates) cons
         if (candidates[i] >= generated_book::kAnswers.size()) return std::nullopt;
         if (i != 0 && candidates[i - 1] >= candidates[i]) canonical = false;
     }
-    // Normal solver states take this allocation-free path.
+    // Solver keeps IDs sorted and unique, so usually we can skip the copy.
     if (canonical) return find_state(candidates);
     auto normalized = candidates;
     std::sort(normalized.begin(), normalized.end());

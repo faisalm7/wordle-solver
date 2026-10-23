@@ -12,7 +12,7 @@ namespace wordle {
 using CandidateSet = std::vector<std::uint32_t>;
 enum class Strategy { Expected, Entropy, Minimax };
 
-// Feedback digits are left-to-right: 0 absent, 1 misplaced, 2 correct.
+// 0 = gray, 1 = yellow, 2 = green.
 std::uint8_t feedback(std::string_view guess, std::string_view answer);
 std::uint8_t parse_pattern(std::string_view pattern);
 std::string format_pattern(std::uint8_t pattern);
@@ -21,7 +21,7 @@ struct Options {
     std::size_t threads = 0;
     std::string cache_path;
     std::size_t exact_threshold = 8;
-    // Small states score directly; ranking >128 answers initializes the table.
+    // Build the table only when a position has more than 128 answers.
     bool defer_matrix = false;
 };
 
@@ -39,6 +39,7 @@ class Solver {
 public:
     Solver(std::vector<std::string> answers, std::vector<std::string> guesses,
            Options options = {});
+    ~Solver();
     const std::vector<std::string>& answers() const;
     const std::vector<std::string>& guesses() const;
     CandidateSet initial_candidates() const;
@@ -51,12 +52,12 @@ public:
                         bool candidate_only = false) const;
     bool cache_loaded() const;
     double matrix_seconds() const;
-    // Required table size, including before a deferred table is initialized.
+    // Table size, even if it hasn't been built yet.
     std::size_t matrix_bytes() const;
 
 private:
     struct Impl;
-    std::shared_ptr<Impl> impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace wordle

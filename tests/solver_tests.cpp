@@ -27,7 +27,7 @@ void rejects(Function function, const std::string& message) {
     throw std::runtime_error(message);
 }
 
-// Independent reference: consume individual answer positions, rather than counts.
+// Match by position to check the solver's letter-count approach.
 std::string reference_feedback(const std::string& guess, const std::string& answer) {
     std::array<bool, 5> consumed{};
     std::string result(5, '0');

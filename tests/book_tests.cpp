@@ -23,9 +23,7 @@ struct PolicyResult {
     std::size_t maximum_turns = 0;
 };
 
-// Reconstruct the entire policy from public recommendations and actual C++
-// Wordle feedback. This validates every answer path without a feedback matrix
-// or any dependence on the generator's tree parser or partition scorer.
+// Check every answer path without relying on the tree generator.
 PolicyResult validate_policy(const wordle::OptimalBook& book,
                              const std::vector<std::string>& answers,
                              const std::vector<std::string>& guesses,
