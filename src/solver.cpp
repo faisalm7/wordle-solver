@@ -1,4 +1,4 @@
-#include "wordle/solver.hpp"
+#include "solver.hpp"
 
 #include <algorithm>
 #include <array>

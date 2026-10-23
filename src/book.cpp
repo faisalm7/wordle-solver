@@ -1,5 +1,5 @@
-#include "wordle/book.hpp"
 #include "book.hpp"
+#include "book_data.hpp"
 
 #include <algorithm>
 #include <cstdint>

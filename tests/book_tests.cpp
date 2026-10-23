@@ -1,4 +1,4 @@
-#include "wordle/book.hpp"
+#include "book.hpp"
 #include "words.hpp"
 
 #include <algorithm>

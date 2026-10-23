@@ -1,6 +1,6 @@
 #pragma once
 
-#include "wordle/solver.hpp"
+#include "solver.hpp"
 
 #include <optional>
 #include <string>

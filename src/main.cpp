@@ -1,5 +1,5 @@
-#include "wordle/solver.hpp"
-#include "wordle/book.hpp"
+#include "solver.hpp"
+#include "book.hpp"
 #include "words.hpp"
 
 #include <algorithm>
@@ -32,7 +32,7 @@ struct Arguments {
     std::size_t threads = 0, top = 0, max_turns = 6, iterations = 21, limit = 0, exact = 8;
     bool json = false, candidate_only = false, dynamic = false;
 };
-const char* help = R"(five / a small Wordle tool by faisalm7
+const char* help = R"(wordle solver
 
 Usage:
   wordle                              Interactive assistant
@@ -311,7 +311,7 @@ void suggest(const wordle::Solver& solver, const Arguments& a, const CandidateSe
                           << std::setw(8) << r.worst_case << std::setw(10) << r.entropy << '\n';
             std::cout << "\n* possible answer\n";
         }
-        std::cout << "\n" << (from_book ? "Optimal book" : "Dynamic engine") << ": " << elapsed << " ms\n";
+        std::cout << "\n" << (from_book ? "Book" : "Search") << ": " << elapsed << " ms\n";
     }
 }
 struct Step { std::string guess, pattern; std::size_t remaining; };
@@ -432,7 +432,7 @@ void bench(const wordle::Solver& solver, const Arguments& a) {
 }
 void interactive(const wordle::Solver& solver, const Arguments& a, const wordle::OptimalBook* book) {
     std::vector<CandidateSet> states = {apply_history(solver, a)};
-    std::cout << "\nfive / by faisalm7\n"
+    std::cout << "\nwordle solver\n"
               << "0 gray · 1 yellow · 2 green\n"
               << "why · list · undo · reset · quit\n";
     while (true) {
