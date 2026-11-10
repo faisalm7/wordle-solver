@@ -38,7 +38,3 @@ It starts with the original 2,315 answers. If none fit your clues, it checks all
 12,972 known words against every clue, including answers like `trill` that were
 missing from the original list. This still isn't a live copy of today's Wordle.
 Use `--answers` and `--guesses` to supply your own; an explicit answer list stays strict.
-
-The word lists and precomputed strategy come from
-[Alex Selby's solver](https://github.com/alex1770/wordle/tree/8fd3f1bdf884ff6757c24ad1227dc561fab7787d).
-His MIT license is included in [data/LICENSE-alex1770.txt](data/LICENSE-alex1770.txt).
